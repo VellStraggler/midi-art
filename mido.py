@@ -3,15 +3,17 @@ import time
 import pygame
 import pygame.midi
 
-# Constants
 SCREEN_WIDTH = 1280  # Width for pitch mapping
 SCREEN_HEIGHT = 720  # Height for time looping (8 seconds)
+DIMENSIONS = (SCREEN_WIDTH, SCREEN_HEIGHT)
+FULL_SCREEN = pygame.Rect((0, 0), DIMENSIONS)
 PITCH_MIN = 36  # Minimum MIDI pitch to display
 PITCH_MAX = 84  # Maximum MIDI pitch to display
 TIME_LOOP = 8  # Loop duration in seconds
-NOTE_COLORS = [(255, 0, 0), (255, 255, 0), (0, 0, 255)]  # Red, Yellow, Blue
+SKIN_TONE = ((232, 182, 117))
 #NOTE_COLORS = [(107,190,155),(245, 244, 158),(201,119,200),(127,127,127)]
 WHITE = ((255,255,255))
+NOTE_COLORS = [(255, 0, 0), SKIN_TONE, (0, 0, 255)]  # Red, Yellow, Blue
 LINE_WIDTH = 4
 
 def setup_midi_output():
@@ -24,9 +26,23 @@ def play_note(midi_output, pitch, velocity):
     else:
         midi_output.note_off(pitch)
 
+def play_special_note(midi_output, pitch, velocity= 50):
+    midi_output.set_instrument(5)
+    play_note(midi_output, pitch, velocity)
+    midi_output.set_instrument(0)
+
+def pause_sound(midi_output):
+    midi_output.set_instrument(20)
+    play_note(midi_output, 50, 25)
+    midi_output.set_instrument(0)
+
+def unpause_sound(midi_output):
+    midi_output.note_off(50)
+
+
 def main():
     pygame.init()
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    screen = pygame.display.set_mode(DIMENSIONS)
     pygame.display.set_caption("MIDI Visualizer with Persistent Notes")
 
     midi_in = rtmidi.MidiIn()
@@ -37,7 +53,8 @@ def main():
         print("No MIDI devices connected.")
         return
 
-    # Open the second to last connected device
+    # Open the second-to-last connected device
+    # Novation LaunchKey 49 connects as 2 MIDI devices, so we use the first one
     latest_device_index = len(available_ports) - 2
     midi_in.open_port(latest_device_index)
     print(f"Connected to device: {available_ports[latest_device_index]}")
@@ -46,37 +63,62 @@ def main():
     drawn_notes = [] # List
     held_notes = {} # Set
 
-    last_loop_time = time.time()
-    start_time = time.time()
-
     color_index = 0
     background_image = screen.copy()
 
     clock = pygame.time.Clock()
     max_height = radiusFromVelocity(128) * 2
 
+    pause_time = -1
+    
+    last_loop_time = time.time()
+    start_time = time.time()
+    current_time = 0
+
     try:
         while True:
-            current_time = time.time() - start_time
+            # current_time = time.time() - start_time
+            if (pause_time == -1):
+                current_time += 1/60
             looped_time = current_time % TIME_LOOP  # Wrap time into an 8-second loop
-            loop_reset = int(current_time / TIME_LOOP)  # Detect loop reset for color change
+            time_to_reset = int(current_time / TIME_LOOP)  # Detect loop reset for color change
 
             # Change the color every time the loop resets (every 8 seconds)
-            if loop_reset != last_loop_time:
-                last_loop_time = loop_reset
-                color_index = loop_reset % len(NOTE_COLORS)
+            if time_to_reset != last_loop_time:
+                last_loop_time = time_to_reset
+                # color_index = (color_index + 1) % len(NOTE_COLORS)
 
                 # Save the background and reset the list of current notes
                 background_image = screen.copy()
-                # screen.blit(background_image, (0,0))
                 # Update the whole screen just once
                 drawn_notes = []
 
-
-            # Event handling for window close
             for event in pygame.event.get():
+                # End Program
                 if event.type == pygame.QUIT:
                     return
+                elif event.type == pygame.KEYDOWN:
+                    # Clear Screen
+                    if event.key == pygame.K_e:
+                        drawn_notes = []
+                        background_image = pygame.Surface(DIMENSIONS)
+                        refresh_whole_screen(screen, background_image)
+                        play_special_note(midi_output, 43, 100)
+                    # Change Color
+                    elif event.key == pygame.K_SPACE:
+                        last_loop_time = time_to_reset
+                        color_index = (color_index + 1) % len(NOTE_COLORS)
+                        play_special_note(midi_output, 88)
+                    # Pause Movement
+                    elif event.key == pygame.K_LSHIFT:
+                        pause_time = looped_time
+                        refresh_whole_screen(screen, background_image)
+                        play_special_note(midi_output, 76, 30)
+                elif event.type == pygame.KEYUP:
+                    if event.key == pygame.K_LSHIFT:
+                        pause_time = -1
+                        refresh_whole_screen(screen, background_image)
+                        play_special_note(midi_output, 72, 30)
 
             # Process all incoming MIDI messages
             while True:
@@ -102,6 +144,10 @@ def main():
 
             # Clear and update the screen with the known background image
             # Only update around the marker line up to the height of the largest possible circle
+
+            if (pause_time != -1):
+                looped_time = pause_time
+
             marker_y = int((looped_time / TIME_LOOP) * SCREEN_HEIGHT)
             screen_section = pygame.Rect(0, max(0, marker_y - max_height // 2), SCREEN_WIDTH, max_height)
             screen.blit(background_image, screen_section, screen_section)
@@ -109,15 +155,14 @@ def main():
             # Add all held notes to the drawn notes at the y-level in which they are pressed
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
-                drawn_notes.append((x, marker_y, color_index, pitch, velocity, loop_reset))
+                drawn_notes.append((x, marker_y, color_index, pitch, velocity, time_to_reset))
 
             # Draw all persistent notes from the drawn_notes list
             for x, y, one_color_index, pitch, velocity, last_reset in drawn_notes:
                 # Only update color for notes that have been sustained and loop reset
                 color = NOTE_COLORS[one_color_index]  # Get color based on the color index
-                # other_color = ((max(color[0]-50,0),max(color[1]-50,0),max(color[2]-50,0)))
-                if (y != marker_y):
-                    pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
+                # if (y != marker_y):
+                pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
 
             time_marker_y = int((looped_time / TIME_LOOP) * SCREEN_HEIGHT)
             
@@ -143,12 +188,12 @@ def main():
 
             # Draw the hint for the next colors at the end of it
             hint = 32
-            pygame.draw.line(screen, NOTE_COLORS[(color_index + 1)%3], (SCREEN_WIDTH - (hint* 2), time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH)
-            pygame.draw.line(screen, NOTE_COLORS[(color_index + 2)%3], (SCREEN_WIDTH - hint, time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH)
+            pygame.draw.line(screen, NOTE_COLORS[(color_index + 1)%len(NOTE_COLORS)], (SCREEN_WIDTH - (hint* 2), time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH * 2)
+            pygame.draw.line(screen, NOTE_COLORS[(color_index + 2)%len(NOTE_COLORS)], (SCREEN_WIDTH - hint, time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH * 2)
 
             # flip to newly drawn display
-            # pygame.display.flip()
-            pygame.display.update(screen_section)
+            pygame.display.flip()
+            # pygame.display.update(screen_section)
             clock.tick(60)
 
     except KeyboardInterrupt:
@@ -163,6 +208,10 @@ def main():
 def radiusFromVelocity(velocity):
     """give a number from 1 to 127"""
     return velocity * velocity * .008
+
+def refresh_whole_screen(screen, background_image):
+    screen.blit(background_image, (0,0), FULL_SCREEN)
+    pygame.display.update(FULL_SCREEN)
 
 if __name__ == "__main__":
     main()
