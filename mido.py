@@ -20,7 +20,7 @@ BROWN = ((97, 34, 16))
 YELLOW = ((247, 253, 23))
 SKY = ((65,200,253))
 GREEN = ((75,182,81))
-NOTE_COLORS = [(255, 3, 5), SKIN_TONE, (16, 68, 126), BROWN, YELLOW, (0,0,0)]
+NOTE_COLORS = [(255, 3, 5), SKIN_TONE, (16, 68, 126), BROWN, YELLOW, (0,0,0), GREEN]
 LINE_WIDTH = 4
 KEY_BORDER_RADIUS = 16
 
@@ -77,18 +77,24 @@ def main():
     start_time = time.time()
     current_time = 0
 
+    # DEV-ONLY OPTIONS:
+    auto_color = True
+    scrolling = True
+    gradients = True
+
     try:
         while True:
             # current_time = time.time() - start_time
             if (not pause_time):
-                current_time += 2/60
+                current_time += 1/60
             looped_time = current_time % TIME_LOOP  # Wrap time into an 8-second loop
             time_to_reset = int(current_time / TIME_LOOP)  # Detect loop reset for color change
 
             # Change the color every time the loop resets (every 8 seconds)
             if time_to_reset != last_loop_time:
                 last_loop_time = time_to_reset
-                # color_index = (color_index + 1) % len(NOTE_COLORS)
+                if(auto_color):
+                    color_index = (color_index + 1) % len(NOTE_COLORS)
                 midi_output.note_off(43)
                 midi_output.note_off(88)
 
@@ -150,9 +156,9 @@ def main():
             # Process all incoming MIDI messages
             while True:
                 if (up_time):
-                    current_time -= 4/30
-                if (down_time):
-                    current_time += 2/30
+                    current_time -= 8/60
+                elif (down_time):
+                    current_time += 6/60
                 msg = midi_in.get_message()
                 if not msg:
                     break
@@ -175,33 +181,57 @@ def main():
 
             # Clear and update the screen with the known background image
             # Only update around the marker line up to the height of the largest possible circle
-            marker_y = int((looped_time / TIME_LOOP) * SCREEN_HEIGHT)
+            time_marker_y = int((looped_time / TIME_LOOP) * SCREEN_HEIGHT)
             screen.blit(background_image, FULL_SCREEN, FULL_SCREEN)
+
+            if(scrolling):
+                time_marker_y = int(SCREEN_HEIGHT - (LINE_WIDTH * 4))
+                i = len(drawn_notes) -1
+                while i > -1:
+                    note = drawn_notes[i]
+                    if (note[1] < -max_height):
+                        drawn_notes.pop(i)
+                    else:
+                        list_note = list(note)
+                        list_note[1] -= 2
+                        drawn_notes[i] = tuple(list_note)
+                    i -= 1
 
             # Add all held notes to the drawn notes at the y-level in which they are pressed
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
-                drawn_notes.append((x, marker_y, color_index, pitch, held_notes.get(pitch), time_to_reset))
+                drawn_notes.append((x, time_marker_y, color_index, pitch, held_notes.get(pitch), time_to_reset))
 
             # Draw all persistent notes from the drawn_notes list
-            for x, y, one_color_index, pitch, velocity, last_reset in drawn_notes:
-                # Only update color for notes that have been sustained and loop reset
-                color = NOTE_COLORS[one_color_index]  # Get color based on the color index
-                # if (y != marker_y):
-                pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
-
-            time_marker_y = int((looped_time / TIME_LOOP) * SCREEN_HEIGHT)
+            if (gradients):
+                for x, y, one_color_index, pitch, velocity, time_to_reset in drawn_notes:
+                    # Only update color for notes that have been sustained and loop reset
+                    color = NOTE_COLORS[one_color_index]  # Get color based on the color index
+                    b=.3
+                    drawn_time = (SCREEN_HEIGHT/2) - y
+                    if (scrolling):
+                        # color = (max(0,color[0]-(b*velocity)),max(0,color[1]-(b*velocity)),max(0,color[2]-(b*velocity)))
+                        new_color = list(color)
+                        for i in range(3):
+                            new_color[i] = min(255,max(0,color[i] + (b*drawn_time)))
+                        color = tuple(new_color)
+                    pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
+            else:
+                for x, y, one_color_index, pitch, velocity, time_to_reset in drawn_notes:
+                    # Only update color for notes that have been sustained and loop reset
+                    color = NOTE_COLORS[one_color_index]  # Get color based on the color index
+                    pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
 
             # Outline all held notes (blends them together)
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
                 # draw outline only for currently held notes on the marker line
-                draw_circle_to_rect_gradient(screen, WHITE, (x, marker_y), radiusFromVelocity(held_notes.get(pitch)), True)
-
+                draw_circle_to_rect_gradient(screen, WHITE, (x, time_marker_y), radiusFromVelocity(held_notes.get(pitch)), True)
 
             # Draw the time marker line
             if time_marker_y < SCREEN_HEIGHT -2:
                 color = NOTE_COLORS[color_index]
+                if scrolling: color = (0,0,0)
                 bright = 380
                 key_color = WHITE
                 if color[0] + color[1] > bright or color[1] + color[2] > bright or color[2] + color[0] > bright:
@@ -243,7 +273,7 @@ def main():
 
             # flip to newly drawn display
             pygame.display.flip()
-            clock.tick(30)
+            clock.tick(60)
 
     except KeyboardInterrupt:
         print("Exiting.")
@@ -278,8 +308,6 @@ def draw_circle_to_rect_gradient(surface: pygame.Surface, color, center, radius:
         # y_shrink = max((pow(radius-(KEY_BORDER_RADIUS*2),3))*.020 - (KEY_BORDER_RADIUS*3) + (radius*3), radius)
         # y_shrink = 6* (radius - 24)
         # y_shrink = log(max(radius-31,1),10) * 74 + 48
-        if outline: 
-            print(radius, y_shrink)
         pygame.draw.rect(surface, color, (center[0]-radius, center[1]-(y_shrink/3),radius*2,(2 * y_shrink//3)),
                          border_radius=radius)
     else:
