@@ -19,6 +19,7 @@ WHITE = ((255,255,255))
 BROWN = ((97, 34, 16))
 YELLOW = ((247, 253, 23))
 SKY = ((65,200,253))
+GREEN = ((75,182,81))
 NOTE_COLORS = [(255, 3, 5), SKIN_TONE, (16, 68, 126), BROWN, YELLOW, (0,0,0)]
 LINE_WIDTH = 4
 KEY_BORDER_RADIUS = 16
@@ -68,7 +69,9 @@ def main():
     clock = pygame.time.Clock()
     max_height = radiusFromVelocity(128) * 2
 
-    pause_time = -1
+    pause_time = False
+    up_time = False
+    down_time = False
     
     last_loop_time = time.time()
     start_time = time.time()
@@ -77,7 +80,7 @@ def main():
     try:
         while True:
             # current_time = time.time() - start_time
-            if (pause_time == -1):
+            if (not pause_time):
                 current_time += 2/60
             looped_time = current_time % TIME_LOOP  # Wrap time into an 8-second loop
             time_to_reset = int(current_time / TIME_LOOP)  # Detect loop reset for color change
@@ -85,7 +88,7 @@ def main():
             # Change the color every time the loop resets (every 8 seconds)
             if time_to_reset != last_loop_time:
                 last_loop_time = time_to_reset
-                color_index = (color_index + 1) % len(NOTE_COLORS)
+                # color_index = (color_index + 1) % len(NOTE_COLORS)
                 midi_output.note_off(43)
                 midi_output.note_off(88)
 
@@ -100,23 +103,28 @@ def main():
                 # End Program
                 if event.type == pygame.QUIT:
                     return
-                # Change Color
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    last_loop_time = time_to_reset
-                    color_index = (color_index + 1) % len(NOTE_COLORS)
-                    play_special_note(midi_output, 88)
                 elif event.type == pygame.KEYDOWN:
+                    # Change Color
+                    if event.key == pygame.K_SPACE:
+                        last_loop_time = time_to_reset
+                        color_index = (color_index + 1) % len(NOTE_COLORS)
+                        play_special_note(midi_output, 88)
                     # Clear Screen
-                    if event.key == pygame.K_e:
+                    elif event.key == pygame.K_e:
                         drawn_notes = []
-                        # background_image = pygame.Surface(DIMENSIONS)
                         draw_background(screen)
                         background_image = screen.copy()
                         play_special_note(midi_output, 43, 100)
                     # Pause Movement
                     elif event.key == pygame.K_LSHIFT:
-                        pause_time = looped_time
+                        pause_time = True
                         play_special_note(midi_output, 76, 30)
+                    # Move bar up
+                    elif event.key == pygame.K_w:
+                        up_time = True
+                    # Move bar down
+                    elif event.key == pygame.K_s:
+                        down_time = True
                     # Undo Button
                     elif event.key == pygame.K_z:
                         if (len(drawn_notes) != 0):
@@ -126,16 +134,25 @@ def main():
                             i = len(drawn_notes) -1
                             while i > -1:
                                 note = drawn_notes[i]
-                                if (note[3] == note_removed[3] and note[1] + 6 > note_removed[1]):
+                                if (note[3] == note_removed[3] and note[2] == note_removed[2] and
+                                    (note[1] + 6 > note_removed[1] and note[1] - 6 < note_removed[1])):
                                     note_removed = drawn_notes.pop(i)
                                 i -= 1
                 elif event.type == pygame.KEYUP:
                     if event.key == pygame.K_LSHIFT:
-                        pause_time = -1
+                        pause_time = False
                         play_special_note(midi_output, 72, 30)
+                    if event.key == pygame.K_w:
+                        up_time = False
+                    if event.key == pygame.K_s:
+                        down_time = False
 
             # Process all incoming MIDI messages
             while True:
+                if (up_time):
+                    current_time -= 4/30
+                if (down_time):
+                    current_time += 2/30
                 msg = midi_in.get_message()
                 if not msg:
                     break
@@ -158,12 +175,7 @@ def main():
 
             # Clear and update the screen with the known background image
             # Only update around the marker line up to the height of the largest possible circle
-
-            if (pause_time != -1):
-                looped_time = pause_time
-
             marker_y = int((looped_time / TIME_LOOP) * SCREEN_HEIGHT)
-            screen_section = pygame.Rect(0, max(0, marker_y - max_height // 2), SCREEN_WIDTH, max_height)
             screen.blit(background_image, FULL_SCREEN, FULL_SCREEN)
 
             # Add all held notes to the drawn notes at the y-level in which they are pressed
@@ -189,14 +201,19 @@ def main():
 
             # Draw the time marker line
             if time_marker_y < SCREEN_HEIGHT -2:
-                pygame.draw.line(screen, WHITE, (0, time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH * 3)
+                color = NOTE_COLORS[color_index]
+                bright = 380
+                key_color = WHITE
+                if color[0] + color[1] > bright or color[1] + color[2] > bright or color[2] + color[0] > bright:
+                    key_color = (0,0,0)
+                pygame.draw.line(screen, key_color, (0, time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH * 3)
                 for i in range(PITCH_MAX - PITCH_MIN):
                     start_pos = i * KEY_WIDTH - (KEY_WIDTH //2)
                     if((i%12) in BLACK_KEYS):
-                        pygame.draw.line(screen, NOTE_COLORS[color_index], (start_pos + (KEY_WIDTH//2), time_marker_y - (LINE_WIDTH*1.5)), (start_pos + (KEY_WIDTH//2), time_marker_y + (LINE_WIDTH*1.5)), LINE_WIDTH)
-                        pygame.draw.line(screen, NOTE_COLORS[color_index], (start_pos, time_marker_y - LINE_WIDTH), (start_pos + KEY_WIDTH, time_marker_y - LINE_WIDTH), LINE_WIDTH * 2)
+                        pygame.draw.line(screen, color, (start_pos + (KEY_WIDTH//2), time_marker_y - (LINE_WIDTH*1.5)), (start_pos + (KEY_WIDTH//2), time_marker_y + (LINE_WIDTH*1.5)), LINE_WIDTH)
+                        pygame.draw.line(screen, color, (start_pos, time_marker_y - LINE_WIDTH), (start_pos + KEY_WIDTH, time_marker_y - LINE_WIDTH), LINE_WIDTH * 2)
                     elif (i%12 in (5,0)):
-                        pygame.draw.line(screen, NOTE_COLORS[color_index], (start_pos, time_marker_y - (LINE_WIDTH*1.5)), (start_pos, time_marker_y + (LINE_WIDTH*1.5)), LINE_WIDTH)
+                        pygame.draw.line(screen, color, (start_pos, time_marker_y - (LINE_WIDTH*1.5)), (start_pos, time_marker_y + (LINE_WIDTH*1.5)), LINE_WIDTH)
             
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
@@ -243,8 +260,11 @@ def radiusFromVelocity(v):
     # return (pow(v - 70,3)/17150) + (.5*v) + 20
     return (pow(v-50,3)/7600) + (.316*v) + 17
 
-def draw_background(screen):
+def draw_background(screen: pygame.Surface):
     pygame.draw.rect(screen, SKY, FULL_SCREEN)
+    image_surface = pygame.image.load("mario.png")
+    screen.blit(image_surface, FULL_SCREEN)
+
 
 
 def draw_circle_to_rect_gradient(surface: pygame.Surface, color, center, radius: float, outline: bool = False):
