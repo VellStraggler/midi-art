@@ -2,6 +2,7 @@ import rtmidi
 import time
 import pygame
 import pygame.midi
+from math import log
 
 SCREEN_WIDTH = 1280  # Width for pitch mapping
 SCREEN_HEIGHT = 720  # Height for time looping (8 seconds)
@@ -20,6 +21,7 @@ YELLOW = ((247, 253, 23))
 SKY = ((65,200,253))
 NOTE_COLORS = [(255, 3, 5), SKIN_TONE, (16, 68, 126), BROWN, YELLOW, (0,0,0)]
 LINE_WIDTH = 4
+KEY_BORDER_RADIUS = 16
 
 def setup_midi_output():
     pygame.midi.init()
@@ -89,7 +91,6 @@ def main():
 
             if looped_time == 0:
                 # Save the background and reset the list of current notes
-                refresh_whole_screen(screen, background_image)
                 background_image = screen.copy()
                 # Update the whole screen just once
                 drawn_notes = []
@@ -111,12 +112,10 @@ def main():
                         # background_image = pygame.Surface(DIMENSIONS)
                         draw_background(screen)
                         background_image = screen.copy()
-                        refresh_whole_screen(screen, background_image)
                         play_special_note(midi_output, 43, 100)
                     # Pause Movement
                     elif event.key == pygame.K_LSHIFT:
                         pause_time = looped_time
-                        refresh_whole_screen(screen, background_image)
                         play_special_note(midi_output, 76, 30)
                     # Undo Button
                     elif event.key == pygame.K_z:
@@ -130,11 +129,9 @@ def main():
                                 if (note[3] == note_removed[3] and note[1] + 6 > note_removed[1]):
                                     note_removed = drawn_notes.pop(i)
                                 i -= 1
-                            refresh_whole_screen(screen, background_image)
                 elif event.type == pygame.KEYUP:
                     if event.key == pygame.K_LSHIFT:
                         pause_time = -1
-                        refresh_whole_screen(screen, background_image)
                         play_special_note(midi_output, 72, 30)
 
             # Process all incoming MIDI messages
@@ -187,14 +184,12 @@ def main():
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
                 # draw outline only for currently held notes on the marker line
-                pygame.draw.circle(screen, WHITE, (x, marker_y), radiusFromVelocity(held_notes.get(pitch)))
+                draw_circle_to_rect_gradient(screen, WHITE, (x, marker_y), radiusFromVelocity(held_notes.get(pitch)), True)
 
 
             # Draw the time marker line
             if time_marker_y < SCREEN_HEIGHT -2:
-                # pygame.draw.line(screen, NOTE_COLORS[color_index], (0, time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH)
                 pygame.draw.line(screen, WHITE, (0, time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH * 3)
-                white = True
                 for i in range(PITCH_MAX - PITCH_MIN):
                     start_pos = i * KEY_WIDTH - (KEY_WIDTH //2)
                     if((i%12) in BLACK_KEYS):
@@ -205,23 +200,22 @@ def main():
             
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
-                # draw outline only for currently held notes on the marker line
+                # draws color over outline for currently held notes on the marker line
                 color = NOTE_COLORS[one_color_index]
-                pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(held_notes.get(pitch)) - LINE_WIDTH)
-                
+                draw_circle_to_rect_gradient(screen, color, (x, y), radiusFromVelocity(held_notes.get(pitch)) - LINE_WIDTH)
+
             # Draw held notes as darkened key notes
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
-                # draw outline only for currently held notes on the marker line
                 color = (NOTE_COLORS[one_color_index])
                 color = (max(0,color[0]-50),max(0,color[1]-50),max(0,color[2]-50))
                 pygame.draw.rect(screen, color, ((x - (KEY_WIDTH), time_marker_y - (LINE_WIDTH*3)),(KEY_WIDTH*2 + LINE_WIDTH//2, (LINE_WIDTH * 6))),
-                                 border_radius=16)
+                                 border_radius=KEY_BORDER_RADIUS)
 
                 # Decrease the pitch over time
                 velocity = held_notes.get(pitch)
                 # held_notes.update({pitch: max(0, (velocity -.1 - 10000/max(1,pow(velocity,3))))})
-                held_notes.update({pitch: max(0, velocity*.994 - (5/max(1,velocity)))})
+                held_notes.update({pitch: max(0, velocity*.9933 - (4/max(1,velocity)))})
 
 
             # Draw the hint for the next colors at the end of it
@@ -249,14 +243,27 @@ def radiusFromVelocity(v):
     # return (pow(v - 70,3)/17150) + (.5*v) + 20
     return (pow(v-50,3)/7600) + (.316*v) + 17
 
-def refresh_whole_screen(screen, background_image):
-    # screen.blit(background_image, (0,0), FULL_SCREEN)
-    # pygame.display.update(FULL_SCREEN)
-    # pygame.display.flip()
-    pass
-
 def draw_background(screen):
     pygame.draw.rect(screen, SKY, FULL_SCREEN)
+
+
+def draw_circle_to_rect_gradient(surface: pygame.Surface, color, center, radius: float, outline: bool = False):
+    if (radius < KEY_BORDER_RADIUS * 3):
+        if outline:
+            radius = int(max(KEY_BORDER_RADIUS *2, radius))
+        else:
+            radius = int(max(KEY_BORDER_RADIUS, radius))
+        y_shrink = (pow(radius-KEY_BORDER_RADIUS,2))/(KEY_BORDER_RADIUS//2) + KEY_BORDER_RADIUS
+        # I tried a lot of curves, this one is the best ^
+        # y_shrink = max((pow(radius-(KEY_BORDER_RADIUS*2),3))*.020 - (KEY_BORDER_RADIUS*3) + (radius*3), radius)
+        # y_shrink = 6* (radius - 24)
+        # y_shrink = log(max(radius-31,1),10) * 74 + 48
+        if outline: 
+            print(radius, y_shrink)
+        pygame.draw.rect(surface, color, (center[0]-radius, center[1]-(y_shrink/3),radius*2,(2 * y_shrink//3)),
+                         border_radius=radius)
+    else:
+        pygame.draw.circle(surface, color, center, radius)
 
 if __name__ == "__main__":
     main()
