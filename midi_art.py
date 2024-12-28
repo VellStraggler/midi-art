@@ -2,6 +2,7 @@ import rtmidi
 import time
 import pygame
 import pygame.midi
+from mido import MidiFile, MidiTrack, Message, MetaMessage
 from math import log
 
 SCREEN_WIDTH = 1280  # Width for pitch mapping
@@ -72,15 +73,18 @@ def main():
     pause_time = False
     up_time = False
     down_time = False
+    take_screenshot = False
     
     last_loop_time = time.time()
-    start_time = time.time()
     current_time = 0
 
     # DEV-ONLY OPTIONS:
     auto_color = True
-    scrolling = True
-    gradients = True
+    scrolling = False
+    gradients = False
+    recording = False
+
+    midi_messages = []
 
     try:
         while True:
@@ -98,11 +102,10 @@ def main():
                 midi_output.note_off(43)
                 midi_output.note_off(88)
 
-            if looped_time == 0:
+            # if looped_time < 2/60:
+            if len(drawn_notes) > 600:
                 # Save the background and reset the list of current notes
-                background_image = screen.copy()
-                # Update the whole screen just once
-                drawn_notes = []
+                take_screenshot = True
 
             # COMMANDS
             for event in pygame.event.get():
@@ -144,6 +147,10 @@ def main():
                                     (note[1] + 6 > note_removed[1] and note[1] - 6 < note_removed[1])):
                                     note_removed = drawn_notes.pop(i)
                                 i -= 1
+                    # Record MIDI Button
+                    elif event.key == pygame.K_r:
+                        recording = not recording
+                        print("Pressed recording to " + str(recording))
                 elif event.type == pygame.KEYUP:
                     if event.key == pygame.K_LSHIFT:
                         pause_time = False
@@ -159,12 +166,36 @@ def main():
                     current_time -= 8/60
                 elif (down_time):
                     current_time += 6/60
+                if (not recording and len(midi_messages) > 0):
+                    # Save to a MIDI File
+                    print("beginning save with " + str(len(midi_messages)))
+                    midi_file = MidiFile()
+                    track = MidiTrack()
+                    # track.append(MetaMessage('set_tempo', tempo=500000)) #supposedly 120 BPM
+                    midi_file.tracks.append(track)
+                    for msg in midi_messages:
+                        track.append(msg)
+
+                    #Write to given filename
+                    output_filename = "recorded_output" + str(int(time.time()%10000)) + ".mid"
+                    midi_file.save(output_filename)
+                    midi_messages = []
+                    print("saved")
+                
                 msg = midi_in.get_message()
                 if not msg:
                     break
                 else:
                     message, delta_time = msg
                     status, pitch, velocity = message
+
+                    # Record MIDI input
+                    if (recording):
+                        print(len(midi_messages))
+                        mido_message = Message.from_bytes(message)
+                        mido_message.time = int(delta_time * 1000)
+                        midi_messages.append(mido_message)
+                        print(mido_message)
 
                     # Play or stop the note based on Note On/Off status
                     if status == 144 and velocity > 0:  # Note On
@@ -222,6 +253,13 @@ def main():
                     color = NOTE_COLORS[one_color_index]  # Get color based on the color index
                     pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
 
+            # Screenshot must be taken before the marker line is drawn
+            if take_screenshot:
+                background_image = screen.copy()
+                # Update the whole screen just once
+                drawn_notes = drawn_notes[300:]
+                take_screenshot = False
+
             # Outline all held notes (blends them together)
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
@@ -249,7 +287,7 @@ def main():
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
                 # draws color over outline for currently held notes on the marker line
                 color = NOTE_COLORS[one_color_index]
-                draw_circle_to_rect_gradient(screen, color, (x, y), radiusFromVelocity(held_notes.get(pitch)) - LINE_WIDTH)
+                # draw_circle_to_rect_gradient(screen, color, (x, y), radiusFromVelocity(held_notes.get(pitch)) - LINE_WIDTH)
 
             # Draw held notes as darkened key notes
             for pitch in held_notes:
@@ -257,7 +295,7 @@ def main():
                 color = (NOTE_COLORS[one_color_index])
                 color = (max(0,color[0]-50),max(0,color[1]-50),max(0,color[2]-50))
                 pygame.draw.rect(screen, color, ((x - (KEY_WIDTH), time_marker_y - (LINE_WIDTH*3)),(KEY_WIDTH*2 + LINE_WIDTH//2, (LINE_WIDTH * 6))),
-                                 border_radius=KEY_BORDER_RADIUS)
+                                border_radius=KEY_BORDER_RADIUS)
 
                 # Decrease the pitch over time
                 velocity = held_notes.get(pitch)
@@ -294,8 +332,6 @@ def draw_background(screen: pygame.Surface):
     pygame.draw.rect(screen, SKY, FULL_SCREEN)
     image_surface = pygame.image.load("mario.png")
     screen.blit(image_surface, FULL_SCREEN)
-
-
 
 def draw_circle_to_rect_gradient(surface: pygame.Surface, color, center, radius: float, outline: bool = False):
     if (radius < KEY_BORDER_RADIUS * 3):
