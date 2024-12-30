@@ -15,6 +15,7 @@ PITCH_MAX = 84  # Maximum MIDI pitch to display
 KEY_WIDTH = SCREEN_WIDTH / (PITCH_MAX - PITCH_MIN)
 TIME_LOOP = 8  # Loop duration in seconds
 BLACK_KEYS = (1,3,6,8,10)
+BUBBLE_LIMIT = 60000
 
 SKIN_TONE = ((233, 162, 74))
 WHITE = ((255,255,255))
@@ -22,7 +23,8 @@ BROWN = ((97, 34, 16))
 YELLOW = ((247, 253, 23))
 SKY = ((65,200,253))
 GREEN = ((75,182,81))
-NOTE_COLORS = [(255, 3, 5), SKIN_TONE, (16, 68, 126), BROWN, YELLOW, (0,0,0), GREEN]
+BLACK = ((0,0,0))
+NOTE_COLORS = [(255, 3, 5), SKIN_TONE, (16, 68, 126), BROWN, YELLOW, BLACK, GREEN]
 LINE_WIDTH = 4
 KEY_BORDER_RADIUS = 16
 
@@ -69,7 +71,7 @@ def main():
     background_image = screen.copy()
 
     clock = pygame.time.Clock()
-    max_height = radiusFromVelocity(128) * 2
+    max_height = radius_from_velocity(128) * 2
 
     pause_time = False
     up_time = False
@@ -78,9 +80,10 @@ def main():
     
     last_loop_time = time.time()
     current_time = 0
+    program_start_time = time.perf_counter()
 
     # DEV-ONLY OPTIONS:
-    auto_color = False
+    auto_color = True
     scrolling = False
     gradients = True
     
@@ -93,8 +96,11 @@ def main():
     next_note_time = time.perf_counter()
     play_filename = "recorded_output.mid"
 
+    run_program = True
+
     try:
-        while True:
+        while run_program:
+            print(str(len(drawn_notes)))
             # current_time = time.time() - start_time
             if (not pause_time):
                 current_time += 1/60
@@ -109,7 +115,7 @@ def main():
                 midi_output.note_off(43)
                 midi_output.note_off(88)
 
-            if len(drawn_notes) > 6000:
+            if len(drawn_notes) > BUBBLE_LIMIT:
                 # Save the background and reset the list of current notes
                 take_screenshot = True
 
@@ -117,7 +123,7 @@ def main():
             for event in pygame.event.get():
                 # End Program
                 if event.type == pygame.QUIT:
-                    return
+                    run_program = False
                 elif event.type == pygame.KEYDOWN:
                     # Change Color
                     if event.key == pygame.K_SPACE:
@@ -176,6 +182,9 @@ def main():
                                 next_note_time = time.perf_counter()
                             else:
                                 paused = True
+                    # QUIT with q Button
+                    elif event.key == pygame.K_q:
+                        run_program = False
                 elif event.type == pygame.KEYUP:
                     if event.key == pygame.K_LSHIFT:
                         pause_time = False
@@ -275,50 +284,74 @@ def main():
                     i -= 1
 
             # Add all held notes to the drawn notes at the y-level in which they are pressed
+            time_pressed = time.perf_counter()
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
-                drawn_notes.append((x, time_marker_y, color_index, pitch, held_notes.get(pitch), time_to_reset))
+                if held_notes.get(pitch) > 1:
+                    drawn_notes.append((x, time_marker_y, color_index, pitch, held_notes.get(pitch), time_pressed))
 
-            # Draw all persistent notes from the drawn_notes list
-            if (gradients):
-                for x, y, one_color_index, pitch, velocity, time_to_reset in drawn_notes:
-                    # Only update color for notes that have been sustained and loop reset
-                    color = NOTE_COLORS[one_color_index]  # Get color based on the color index
-                    b=.3
-                    drawn_time = (SCREEN_HEIGHT/2) - y
+
+            first_expired_index = -1
+            # Draw all notes from the drawn_notes list that are OVER 30 seconds old
+            for i in range(len(drawn_notes)):
+                x, y, one_color_index, pitch, velocity, time_to_reset = drawn_notes[i]
+            # for x, y, one_color_index, pitch, velocity, time_to_reset in drawn_notes:
+                # if note is 30 seconds old, get rid of 
+                if time_pressed > time_to_reset + 30:
+                    first_expired_index += 1
+                else:
+                    break
+                color = NOTE_COLORS[one_color_index]  # Get color based on the color index
+                if (gradients):
                     if (scrolling):
-                        new_color = list(color)
-                        for i in range(3):
-                            new_color[i] = min(255,max(0,color[i] + (b*drawn_time)))
-                        color = tuple(new_color)
-                    pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
-            else:
-                for x, y, one_color_index, pitch, velocity, time_to_reset in drawn_notes:
-                    # Only update color for notes that have been sustained and loop reset
-                    color = NOTE_COLORS[one_color_index]  # Get color based on the color index
-                    pygame.draw.circle(screen, color, (x, y), radiusFromVelocity(velocity))
+                        b=.3
+                        drawn_time = (SCREEN_HEIGHT/2) - y
+                    else:
+                        b=1.5
+                        drawn_time = - (time_pressed - time_to_reset - 70)
+                    new_color = list(color)
+                    for i in range(3):
+                        new_color[i] = min(255,max(0,color[i] + (b*drawn_time)))
+                        # print(new_color)
+                    color = tuple(new_color)
+                pygame.draw.circle(screen, color, (x, y), radius_from_velocity(velocity))
 
-            # Screenshot must be taken before the marker line is drawn
-            if take_screenshot:
-                background_image = screen.copy()
+            # Remove all notes that are OLDER than 30 seconds and replace with a photo
+            if (first_expired_index > -1):
                 # Update the whole screen just once
-                drawn_notes = []
-                take_screenshot = False
+                background_image = screen.copy()
+                drawn_notes = drawn_notes[first_expired_index:]
+
+            for x, y, one_color_index, pitch, velocity, time_to_reset in drawn_notes:
+                color = NOTE_COLORS[one_color_index]  # Get color based on the color index
+                if (gradients):
+                    if (scrolling):
+                        b=.3
+                        drawn_time = (SCREEN_HEIGHT/2) - y
+                    else:
+                        b=1.5
+                        drawn_time = - (time_pressed - time_to_reset - 70)
+                    new_color = list(color)
+                    for i in range(3):
+                        new_color[i] = min(255,max(0,color[i] + (b*drawn_time)))
+                        # print(new_color)
+                    color = tuple(new_color)
+                pygame.draw.circle(screen, color, (x, y), radius_from_velocity(velocity))
 
             # Outline all held notes (blends them together)
             for pitch in held_notes:
                 x = int(((pitch - PITCH_MIN) / (PITCH_MAX - PITCH_MIN)) * SCREEN_WIDTH)
                 # draw outline only for currently held notes on the marker line
-                draw_circle_to_rect_gradient(screen, WHITE, (x, time_marker_y), radiusFromVelocity(held_notes.get(pitch)), True)
+                draw_circle_to_rect_gradient(screen, WHITE, (x, time_marker_y), radius_from_velocity(held_notes.get(pitch)), True)
 
             # Draw the time marker line
             if time_marker_y < SCREEN_HEIGHT -2:
                 color = NOTE_COLORS[color_index]
-                if scrolling: color = (0,0,0)
+                if scrolling: color = BLACK
                 bright = 380
                 key_color = WHITE
                 if color[0] + color[1] > bright or color[1] + color[2] > bright or color[2] + color[0] > bright:
-                    key_color = (0,0,0)
+                    key_color = BLACK
                 pygame.draw.line(screen, key_color, (0, time_marker_y), (SCREEN_WIDTH, time_marker_y), LINE_WIDTH * 3)
                 for i in range(PITCH_MAX - PITCH_MIN):
                     start_pos = i * KEY_WIDTH - (KEY_WIDTH //2)
@@ -345,7 +378,8 @@ def main():
                 # Decrease the pitch over time
                 velocity = held_notes.get(pitch)
                 # held_notes.update({pitch: max(0, (velocity -.1 - 10000/max(1,pow(velocity,3))))})
-                held_notes.update({pitch: max(0, velocity*.9933 - (4/max(1,velocity)))})
+                # held_notes.update({pitch: max(0, velocity*.9933 - (4/max(1,velocity)))})
+                held_notes.update({pitch: max(0, velocity*.997 - (4.5/max(1,velocity)))})
 
 
             # Draw the hint for the next colors at the end of it
@@ -367,16 +401,19 @@ def main():
         pygame.midi.quit()
         pygame.quit()
 
-def radiusFromVelocity(v):
+def radius_from_velocity(v):
     """give a number from 1 to 127"""
     # return v * v * .007
     # return (pow(v - 70,3)/17150) + (.5*v) + 20
-    return (pow(v-50,3)/7600) + (.316*v) + 17
+    # return (pow(v-50,3)/7600) + (.316*v) + 17
+    return (pow(v-40,3)/9600) + (.416*v) + 7
+    # return v*v//127
 
 def draw_background(screen: pygame.Surface):
-    pygame.draw.rect(screen, SKY, FULL_SCREEN)
-    image_surface = pygame.image.load("mario.png")
-    screen.blit(image_surface, FULL_SCREEN)
+    # pygame.draw.rect(screen, SKY, FULL_SCREEN)
+    pygame.draw.rect(screen, BLACK, FULL_SCREEN)
+    # image_surface = pygame.image.load("mario.png")
+    # screen.blit(image_surface, FULL_SCREEN)
 
 def draw_circle_to_rect_gradient(surface: pygame.Surface, color, center, radius: float, outline: bool = False):
     if (radius < KEY_BORDER_RADIUS * 3):
