@@ -4,6 +4,7 @@ import pygame
 import pygame.midi
 from mido import MidiFile, MidiTrack, Message, MetaMessage
 from math import log
+from time import sleep
 
 SCREEN_WIDTH = 1280  # Width for pitch mapping
 SCREEN_HEIGHT = 720  # Height for time looping (8 seconds)
@@ -79,12 +80,18 @@ def main():
     current_time = 0
 
     # DEV-ONLY OPTIONS:
-    auto_color = True
+    auto_color = False
     scrolling = False
-    gradients = False
+    gradients = True
+    
     recording = False
+    playing = False
+    paused = False
 
     midi_messages = []
+    midi_file = None
+    next_note_time = time.perf_counter()
+    play_filename = "recorded_output.mid"
 
     try:
         while True:
@@ -102,8 +109,7 @@ def main():
                 midi_output.note_off(43)
                 midi_output.note_off(88)
 
-            # if looped_time < 2/60:
-            if len(drawn_notes) > 600:
+            if len(drawn_notes) > 6000:
                 # Save the background and reset the list of current notes
                 take_screenshot = True
 
@@ -148,9 +154,28 @@ def main():
                                     note_removed = drawn_notes.pop(i)
                                 i -= 1
                     # Record MIDI Button
-                    elif event.key == pygame.K_r:
+                    elif event.key == pygame.K_r and not playing:
                         recording = not recording
                         print("Pressed recording to " + str(recording))
+                    # Play MIDI Button
+                    # Cannot record and play at same time
+                    elif event.key == pygame.K_p and not recording:
+                        if not playing:
+                            print("playing audio file: " + play_filename)
+                            playing = True
+                            midi_messages = []
+                            midi_file = MidiFile(play_filename)
+                            # Outputs note messages only by default
+                            for message in midi_file:
+                                midi_messages.append(message)
+                            # Start playing right NOW
+                            next_note_time = time.perf_counter() # + midi_messages[0].time
+                        else:
+                            if paused:
+                                paused = False
+                                next_note_time = time.perf_counter()
+                            else:
+                                paused = True
                 elif event.type == pygame.KEYUP:
                     if event.key == pygame.K_LSHIFT:
                         pause_time = False
@@ -166,7 +191,7 @@ def main():
                     current_time -= 8/60
                 elif (down_time):
                     current_time += 6/60
-                if (not recording and len(midi_messages) > 0):
+                if (not recording and len(midi_messages) > 0 and not playing):
                     # Save to a MIDI File
                     print("beginning save with " + str(len(midi_messages)))
                     midi_file = MidiFile()
@@ -182,7 +207,28 @@ def main():
                     midi_messages = []
                     print("saved")
                 
+                # Accept input from the user
                 msg = midi_in.get_message()
+                if not msg:
+                    # Play from the recorded midi file if the user has not played that very millisecond
+                    if (playing and not paused):
+                        # Things will generally be played on time, but not exactly when the user is playing too
+                        if next_note_time <= time.perf_counter():
+                            if not isinstance(midi_messages[0],MetaMessage):
+                                if midi_messages[0].velocity != 0:
+                                    # Construct message that can be read
+                                    message = (144, midi_messages[0].note, midi_messages[0].velocity)
+                                    msg = (message, midi_messages[0].time)
+                                else:
+                                    message = (128, midi_messages[0].note, 0)
+                                    msg = (message, midi_messages[0].time)
+                            if len(midi_messages) != 0:
+                                midi_messages = midi_messages[1:]
+                                if len(midi_messages) != 0:
+                                    next_note_time += midi_messages[0].time
+                        if len(midi_messages) == 0:
+                            playing = False
+                            print("playing finished")
                 if not msg:
                     break
                 else:
@@ -198,7 +244,7 @@ def main():
                         print(mido_message)
 
                     # Play or stop the note based on Note On/Off status
-                    if status == 144 and velocity > 0:  # Note On
+                    if status == 144 and velocity > 0:  # Note On)
                         play_note(midi_output, pitch, velocity)
                         # Calculate x and y for the note based on pitch and time
                         # Save position, color index, and pitch to drawn_notes list (for persistent notes)
@@ -241,7 +287,6 @@ def main():
                     b=.3
                     drawn_time = (SCREEN_HEIGHT/2) - y
                     if (scrolling):
-                        # color = (max(0,color[0]-(b*velocity)),max(0,color[1]-(b*velocity)),max(0,color[2]-(b*velocity)))
                         new_color = list(color)
                         for i in range(3):
                             new_color[i] = min(255,max(0,color[i] + (b*drawn_time)))
@@ -257,7 +302,7 @@ def main():
             if take_screenshot:
                 background_image = screen.copy()
                 # Update the whole screen just once
-                drawn_notes = drawn_notes[300:]
+                drawn_notes = []
                 take_screenshot = False
 
             # Outline all held notes (blends them together)
