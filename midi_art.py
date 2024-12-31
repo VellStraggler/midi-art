@@ -13,7 +13,6 @@ PITCH_MAX = 84  # Maximum MIDI pitch to display
 KEY_WIDTH = SCREEN_WIDTH / (PITCH_MAX - PITCH_MIN)
 TIME_LOOP = 8  # Loop duration in seconds
 BLACK_KEYS = (1,3,6,8,10)
-BUBBLE_LIMIT = 60000
 
 SKIN_TONE = ((233, 162, 74))
 WHITE = ((255,255,255))
@@ -83,6 +82,7 @@ def main():
     scrolling = False
     gradients = False
     
+    take_screenshot = False
     recording = False
     playing = False
     paused = False
@@ -109,10 +109,6 @@ def main():
                     color_index = (color_index + 1) % len(NOTE_COLORS)
                 midi_output.note_off(43)
                 midi_output.note_off(88)
-
-            if len(drawn_notes) > BUBBLE_LIMIT:
-                # Save the background and reset the list of current notes
-                take_screenshot = True
 
             # COMMANDS
             for event in pygame.event.get():
@@ -154,11 +150,11 @@ def main():
                                     (note[1] + 6 > note_removed[1] and note[1] - 6 < note_removed[1])):
                                     note_removed = drawn_notes.pop(i)
                                 i -= 1
-                    # Record MIDI Button
+                    # (R)ecord MIDI Button
                     elif event.key == pygame.K_r and not playing:
                         recording = not recording
                         print("Pressed recording to " + str(recording))
-                    # Play MIDI Button
+                    # (P)lay MIDI Button
                     # Cannot record and play at same time
                     elif event.key == pygame.K_p and not recording:
                         if not playing:
@@ -177,9 +173,12 @@ def main():
                                 next_note_time = time.perf_counter()
                             else:
                                 paused = True
-                    # QUIT with q Button
+                    # (Q)uit
                     elif event.key == pygame.K_q:
                         run_program = False
+                    # (T)ake Screenshot
+                    elif event.key == pygame.K_t:
+                        take_screenshot = True
                 elif event.type == pygame.KEYUP:
                     if event.key == pygame.K_LSHIFT:
                         pause_time = False
@@ -333,6 +332,9 @@ def main():
                     color = tuple(new_color)
                 pygame.draw.circle(screen, color, (x, y), radius_from_velocity(velocity))
 
+            if take_screenshot:
+                pygame.image.save(screen,"screenshot.png")
+                take_screenshot = False
 
             # Draw the time marker line
             if time_marker_y < SCREEN_HEIGHT -2:
